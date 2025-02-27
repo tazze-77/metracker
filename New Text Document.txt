@@ -1,0 +1,176 @@
+package com.example.medicationtracker.data.repository
+
+import com.example.medicationtracker.data.model.Medication
+import kotlinx.coroutines.flow.Flow
+
+interface MedicationRepository {
+    fun getAllMedications(): Flow<List<Medication>>
+    suspend fun getMedicationById(id: Long): Medication?
+    suspend fun insertMedication(medication: Medication): Long
+    suspend fun updateMedication(medication: Medication)
+    suspend fun deleteMedication(medication: Medication)
+}package com.example.medicationtracker.data.repository
+
+import com.example.medicationtracker.data.database.MedicationDao
+import com.example.medicationtracker.data.model.Medication
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+
+class MedicationRepositoryImpl @Inject constructor(
+    private val medicationDao: MedicationDao
+) : MedicationRepository {
+    override fun getAllMedications(): Flow<List<Medication>> = 
+        medicationDao.getAllMedications()
+
+    override suspend fun getMedicationById(id: Long): Medication? =
+        medicationDao.getMedicationById(id)
+
+    override suspend fun insertMedication(medication: Medication): Long =
+        medicationDao.insertMedication(medication)
+
+    override suspend fun updateMedication(medication: Medication) =
+        medicationDao.updateMedication(medication)
+
+    override suspend fun deleteMedication(medication: Medication) =
+        medicationDao.deleteMedication(medication)
+}package com.example.medicationtracker.data.repository
+
+import com.example.medicationtracker.data.model.MedicationReminder
+import kotlinx.coroutines.flow.Flow
+import java.time.LocalDateTime
+
+interface ReminderRepository {
+    fun getUpcomingReminders(fromTime: LocalDateTime): Flow<List<MedicationReminder>>
+    suspend fun insertReminder(reminder: MedicationReminder): Long
+    suspend fun updateReminder(reminder: MedicationReminder)
+    suspend fun markReminderTaken(reminderId: Long, taken: Boolean, takenAt: LocalDateTime?)
+}package com.example.medicationtracker.domain.usecase
+
+import com.example.medicationtracker.data.model.Medication
+import com.example.medicationtracker.data.repository.MedicationRepository
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+
+class GetAllMedicationsUseCase @Inject constructor(
+    private val repository: MedicationRepository
+) {
+    operator fun invoke(): Flow<List<Medication>> = repository.getAllMedications()
+}package com.example.medicationtracker.domain.usecase
+
+import com.example.medicationtracker.data.model.Medication
+import com.example.medicationtracker.data.repository.MedicationRepository
+import javax.inject.Inject
+
+class AddMedicationUseCase @Inject constructor(
+    private val repository: MedicationRepository
+) {
+    suspend operator fun invoke(medication: Medication): Long =
+        repository.insertMedication(medication)
+}package com.example.medicationtracker.di
+
+import android.content.Context
+import androidx.room.Room
+import com.example.medicationtracker.data.database.MedicationDatabase
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object DatabaseModule {
+    @Provides
+    @Singleton
+    fun provideMedicationDatabase(
+        @ApplicationContext context: Context
+    ): MedicationDatabase = Room.databaseBuilder(
+        context,
+        MedicationDatabase::class.java,
+        "medication_database"
+    ).build()
+
+    @Provides
+    @Singleton
+    fun provideMedicationDao(database: MedicationDatabase) = database.medicationDao()
+
+    @Provides
+    @Singleton
+    fun provideReminderDao(database: MedicationDatabase) = database.reminderDao()
+}package com.example.medicationtracker.di
+
+import com.example.medicationtracker.data.repository.*
+import dagger.Binds
+import dagger.Module
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule {
+    @Binds
+    @Singleton
+    abstract fun bindMedicationRepository(
+        impl: MedicationRepositoryImpl
+    ): MedicationRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindReminderRepository(
+        impl: ReminderRepositoryImpl
+    ): ReminderRepository
+}package com.example.medicationtracker.worker
+
+import android.content.Context
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import com.example.medicationtracker.R
+import javax.inject.Inject
+
+class ReminderWorker(
+    context: Context,
+    params: WorkerParameters
+) : CoroutineWorker(context, params) {
+
+    override suspend fun doWork(): Result {
+        val medicationName = inputData.getString(KEY_MEDICATION_NAME) ?: return Result.failure()
+        
+        showNotification(medicationName)
+        return Result.success()
+    }
+
+    private fun showNotification(medicationName: String) {
+        val notificationManager = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) 
+            as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Medication Reminders",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_medication)
+            .setContentTitle("Medication Reminder")
+            .setContentText("Time to take $medicationName")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+    }
+
+    companion object {
+        const val KEY_MEDICATION_NAME = "medication_name"
+        const val CHANNEL_ID = "medication_reminder_channel"
+    }
+}
